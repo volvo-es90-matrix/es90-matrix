@@ -265,7 +265,12 @@ button{font-family:inherit;}
 /* item 9,10,12,15: rounded-square category cards for strengths/weaknesses */
 .cat-card-grid{display:flex;gap:10px;align-items:stretch;}
 .cat-card{flex:1 1 0;min-width:0;border-radius:16px;padding:0 12px 12px;min-height:110px;display:flex;flex-direction:column;background:#fff;border:1px solid var(--line-soft);overflow:hidden;transition:box-shadow .15s,transform .1s,opacity .25s;}
-.cat-card:hover{box-shadow:0 0 0 2px var(--orange);transform:translateY(-1px);}
+.cat-card:hover{box-shadow:0 3px 10px rgba(19,51,75,.10);transform:translateY(-1px);}
+.cat-card.option-analysis-pinned{border-color:#ef4b32!important;box-shadow:0 0 0 2px #ef4b32,0 4px 14px rgba(239,75,50,.18)!important;opacity:1!important;}
+.cat-card-list li.option-analysis-item-pinned{margin:2px -5px;padding:3px 5px 3px 14px;border:1.5px solid #ef4b32;border-radius:7px;background:rgba(239,75,50,.07);color:var(--ink);font-weight:700;}
+.cat-card-list li.option-analysis-item-pinned::before{left:5px;top:10px;background:#ef4b32;opacity:1;}
+.opt-table tr.option-analysis-source{cursor:pointer;}
+.opt-table tr.option-analysis-source:hover td{background:#fff8f3;}
 .cat-card.dimmed .cat-card-head{opacity:.6;}
 .cat-card.dimmed{opacity:.88;}
 .cat-card.dimmed .cat-card-list{color:#9aa5b1;}
@@ -16876,11 +16881,12 @@ function groupByCategoryOrdered(items){
 // ---- render category cards for strengths/weaknesses (item 9,10,12,15) ----
 function renderCatOptionCards(items, tone){
   const groups = groupByCategoryOrdered(items);
+  const escapeAttr = value=>String(value||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
   return `<div class="cat-card-grid ${tone}">
     ${groups.map(g=>`
       <div class="cat-card" data-catkey="${g.key}" style="cursor:pointer;" onclick="highlightCatCard('${g.key.replace(/'/g,"\\'").replace(/"/g,'&quot;')}')">
         <div class="cat-card-head">${g.category}</div>
-        ${g.entries.length ? `<ul class="cat-card-list">${g.entries.map(e=>`<li>${e.name}${e.badge?` <span class="ug-badge">${e.badge}</span>`:''}</li>`).join('')}</ul>` : `<div class="cat-card-empty">해당 없음</div>`}
+        ${g.entries.length ? `<ul class="cat-card-list">${g.entries.map(e=>`<li data-analysis-item="${escapeAttr(e.name)}">${e.name}${e.badge?` <span class="ug-badge">${e.badge}</span>`:''}</li>`).join('')}</ul>` : `<div class="cat-card-empty">해당 없음</div>`}
       </div>
     `).join('')}
   </div>`;
@@ -17874,6 +17880,53 @@ function syncCatCardDim(key){
   });
 }
 
+let PINNED_OPTION_ANALYSIS = null;
+function normalizeAnalysisItemName(value){
+  return String(value||'')
+    .replace(/[\u200B-\u200D\u2066-\u2069\uFEFF]/g,'')
+    .replace(/[“”]/g,'"')
+    .replace(/\s+/g,' ')
+    .trim()
+    .toLowerCase();
+}
+function clearPinnedOptionAnalysis(){
+  document.querySelectorAll('.cat-card.option-analysis-pinned').forEach(card=>card.classList.remove('option-analysis-pinned'));
+  document.querySelectorAll('.cat-card-list li.option-analysis-item-pinned').forEach(item=>item.classList.remove('option-analysis-item-pinned'));
+}
+function applyPinnedOptionAnalysis(scrollToMatch=false){
+  clearPinnedOptionAnalysis();
+  const selection = PINNED_OPTION_ANALYSIS;
+  if(!selection) return;
+  const currentContext = [STATE.es90Trim,STATE.brandKey,STATE.compTrim].join('|');
+  if(selection.context!==currentContext){
+    PINNED_OPTION_ANALYSIS = null;
+    return;
+  }
+  const itemName = normalizeAnalysisItemName(selection.itemName);
+  const cards = Array.from(document.querySelectorAll('.cat-card')).filter(card=>card.dataset.catkey===selection.categoryKey);
+  const exactMatches = [];
+  cards.forEach(card=>{
+    const item = Array.from(card.querySelectorAll('[data-analysis-item]'))
+      .find(node=>normalizeAnalysisItemName(node.dataset.analysisItem)===itemName);
+    if(item) exactMatches.push({card,item});
+  });
+  // 완전 일치하는 분석 항목만 강조한다. 부분 일치나 카테고리 추측으로 다른 카드를 선택하지 않는다.
+  if(exactMatches.length!==1) return;
+  const {card,item} = exactMatches[0];
+  card.classList.add('option-analysis-pinned');
+  item.classList.add('option-analysis-item-pinned');
+  if(scrollToMatch) smoothScrollToElement(card,'center',700);
+}
+function pinOptionAnalysisFromDetail(event,categoryKey,itemName){
+  if(event?.target?.closest('.option-jump,button,a,input,select')) return;
+  PINNED_OPTION_ANALYSIS = {
+    categoryKey,
+    itemName,
+    context:[STATE.es90Trim,STATE.brandKey,STATE.compTrim].join('|')
+  };
+  applyPinnedOptionAnalysis(true);
+}
+
 // item: clicking a category bar in "카테고리별 옵션비교" jumps to the matching tab in "카테고리별 상세옵션"
 // item: clicking a category card in "옵션구성 분석결과" keeps its color and tones down the other 7, then jumps to the matching tab
 function highlightCatCard(key){
@@ -18208,7 +18261,9 @@ function renderOptTable(cat){
 
         }
 
-        return `<tr class="${rowClass}" data-item-name="${escapeDataValue(it.name)}"${rowOptionName?` data-option-name="${escapeDataValue(rowOptionName)}"`:''}>
+        const inlineCategory = String(cat.category||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+        const inlineItemName = String(it.name||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+        return `<tr class="${rowClass} option-analysis-source" data-item-name="${escapeDataValue(it.name)}"${rowOptionName?` data-option-name="${escapeDataValue(rowOptionName)}"`:''} onclick="pinOptionAnalysisFromDetail(event,'${inlineCategory}','${inlineItemName}')">
           <td class="opt-name">${compareBadge}${displayName}</td>
           <td class="opt-val">${esCell}</td>
           <td class="opt-val">${compCell}</td>
